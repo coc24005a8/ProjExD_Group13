@@ -12,9 +12,9 @@ TILE_SIZE_X, TILE_SIZE_Y = 100, 40 # タイルのサイズ
 ADD_STAGE_BLOCK = 100 # ステージの拡張幅
 GRAVITY = 0.8         # 重力
 JUMP_STRENGTH = -15   # ジャンプ力 (Y軸は上がマイナス)
-PLAYER_SPEED = 5      # 左右の移動速度
+PLAYER_SPEED = 100      # 左右の移動速度
 PLAYER_HP = 3
-NO_DAMAGE_TIME = 2
+NO_DAMAGE_TIME = 100
 PLAYER_POWER = 10
 ENEMY_NUM = 1         # 敵の数
 ENEMY_SPEED = 1
@@ -90,6 +90,9 @@ def make_float_land(map_data: "list[list[int]]", add_range: "tuple[int]", num: "
                 X = len(map_data) - width
             for j in range(width):
                 map_data[len(map_data) - Y][X + j] = 3
+    
+    for i in range(2):
+        map_data[len(map_data)- 8][len(map_data[0]) - i - 1] = 3
     return map_data
 
 #---修正
@@ -164,8 +167,11 @@ class Player(pg.sprite.Sprite):
     def __init__(self):
         super().__init__()
         
-        self.img = pg.image.load("fig/yoko1.png")
+        self.original = pg.image.load("fig/yoko1.png")
+        self.imgs = self.original
         self.flip = pg.transform.flip(self.img, True, False)
+        
+        self.for_lap = [self.img, pg.transform.laplacian(self.original)]
         self.rect = self.img.get_rect()
         self.vx = 0
         self.vy = 0
@@ -220,6 +226,16 @@ class Player(pg.sprite.Sprite):
         self.vy += JUMP_STRENGTH
         self.hover_num += 1
         return
+    
+    def no_damage(self):
+        if self.no_damage_time == 0:
+            self.no_damage_time = NO_DAMAGE_TIME
+        else:
+            if self.no_damage_time % 10 == 0 and self.no_damage_time % 2 != 0:
+                self.dire_to_img[self.dire] = self.original
+            elif self.no_damage_time % 20 == 0:
+                self.dire_to_img[self.dire] = pg.transform.laplacian(self.img)
+            self.no_damage_time -= 1
 #---
 
 #---修正
@@ -230,7 +246,7 @@ class Enemy(pg.sprite.Sprite):
     def __init__(self):
         super().__init__()
 
-        self.image = pg.image.load("fig/troia(extend).png")
+        self.image = pg.image.load("fig/troia1.png")
         self.flip = pg.transform.flip(self.image, True, False)
         self.rect = self.image.get_rect()
         self.rect.center = (1000, 0) #テスト用で定数
@@ -242,7 +258,7 @@ class Enemy(pg.sprite.Sprite):
         self.hp = 5
         self.power = 1
         
-        self.is_on_ground = True
+        self.is_on_ground = False
         self.is_move_left, self.is_move_right = True, False
 
     def update(self, all_blocks: "list[object]", floar_blocks: "list[object]", camera_x: "int") -> None:
@@ -253,19 +269,48 @@ class Enemy(pg.sprite.Sprite):
 
         for block in all_blocks:
             if self.rect.colliderect(block):
-                print("irregular")
-                print(f"敵の速度{self.vx}")
+                if self.is_move_left:
+                    self.rect.left = block.right
+                    self.is_move_right = True
+                    self.is_move_left = False
+                elif self.is_move_right:
+                    self.rect.right = block.left
+                    self.is_move_left = True
+                    self.is_move_right = False
                 self.vx *= -1
                 print(f"敵の速度{self.vx}")
+                
         gravity(self, floar_blocks)
+        # self.rect.centery -= (TILE_SIZE_Y/2)
 #------
 
 #---まだ
 class Goal(pg.sprite.Sprite):
+    def __init__(self, map_data):
+        super().__init__()
+        self.image = pg.image.load("fig/goal(normal).png")
+        self.rect = self.image.get_rect()
+        self.rect.x, self.rect.y = TILE_SIZE_X * len(map_data[0]) - TILE_SIZE_X * 1.5, SCREEN_HEIGHT - TILE_SIZE_Y * 9
+
+    # def update(self, camera_x):
+        # self.rect.x = camera_x
+        
+    
+#------
+class Hp:
+    def __init__(self):
+        self.pic = pg.font.Font(None, 80)
+        self.txt = self.pic.render("HP: ", True, (0, 0, 0))
+
+class Heart(pg.sprite.Sprite):
     def __init__(self):
         super().__init__()
-        # self.image = pg.image.load("")
-#------
+        self.img = pg.image.load("fig/hearts1.png")
+
+    def update(self, instance, num):
+        if instance.hp == num:
+            self.kill()
+
 
 #---まだ
 class Score:
@@ -304,7 +349,7 @@ def main():
             if tile_type == 1:
                 block_rects.append(pg.Rect(x * TILE_SIZE_X, y * TILE_SIZE_Y, TILE_SIZE_X, TILE_SIZE_Y))
             elif tile_type == 2:
-                surface_rects.append(pg.Rect(x * TILE_SIZE_X, y * TILE_SIZE_Y + (TILE_SIZE_Y / 2), TILE_SIZE_X, TILE_SIZE_Y / 2))
+                surface_rects.append(pg.Rect(x * TILE_SIZE_X, y * TILE_SIZE_Y + (TILE_SIZE_Y / 2), TILE_SIZE_X,TILE_SIZE_Y / 2))
             elif tile_type == 3:
                 floatland_rects.append(pg.Rect(x * TILE_SIZE_X, y * TILE_SIZE_Y + (TILE_SIZE_Y / 2), TILE_SIZE_X, TILE_SIZE_Y / 2))
 
@@ -313,11 +358,16 @@ def main():
     all_blocks = block_rects + floar_blocks
     
     enemys = pg.sprite.Group()
+    hearts = pg.sprite.Group()
 
     player = Player() 
     for i in range(ENEMY_NUM):
         enemys.add(Enemy())
+    goal = Goal(map_data)
+    for i in range(player.hp):
+        hearts.add(Heart())
     score = Score()
+    hp = Hp()
     
     camera_x = 0
 
@@ -325,6 +375,13 @@ def main():
     while True:
     
         #ーーーーーイベント取得ーーーーー
+
+        if player.rect.colliderect(goal):
+            print("goal!!")
+            return
+        if player.hp < 0:
+            print("failed")
+            return 
         for event in pg.event.get():
             #ゲーム終了
             if event.type == pg.QUIT:
@@ -350,6 +407,15 @@ def main():
                     player.move_right = False
         #ーーーーーーーーーーーーーーーー
 
+        for enemy in pg.sprite.spritecollide(player, enemys, False): 
+            if player.no_damage_time == 0:
+                player.hp -= 1
+                hearts.update(player, len(hearts))
+                player.no_damage()
+            else:
+                player.no_damage()
+                pass
+
         #----修正
         camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
         scroll_x = -camera_x % bg_width
@@ -361,7 +427,7 @@ def main():
         screen.blit(player.dire_to_img[player.dire], (player.rect.x - camera_x, player.rect.y))
         enemys.update(all_blocks, floar_blocks, camera_x)
         for enemy in enemys:
-            screen.blit(enemy.image, (enemy.rect.centerx - camera_x, enemy.rect.centery))
+            screen.blit(enemy.image, (enemy.rect.x - camera_x, enemy.rect.y))
         #------
 
         for block in block_rects:
@@ -370,7 +436,13 @@ def main():
             screen.blit(assets.weeds, (block.x - camera_x,block.y))
         for block in floatland_rects:
             screen.blit(assets.cloud, (block.x - camera_x, block.y))
+        screen.blit(goal.image, (goal.rect.x - camera_x, goal.rect.y))
 
+        # hearts.update(player, len(hearts))
+        for index, i in enumerate(hearts, 1):
+            screen.blit(i.img, (100+(80 * index), 100))
+        # hp.update(player)
+        # screen.blit(hp.txt, (100, 100))
         score.update()
         screen.blit(score.txt, (SCREEN_WIDTH / 10, SCREEN_HEIGHT - SCREEN_HEIGHT / 10))
         

@@ -13,7 +13,11 @@ ADD_STAGE_BLOCK = 100 # ステージの拡張幅
 GRAVITY = 0.8         # 重力
 JUMP_STRENGTH = -15   # ジャンプ力 (Y軸は上がマイナス)
 PLAYER_SPEED = 5      # 左右の移動速度
+PLAYER_HP = 3
+NO_DAMAGE_TIME = 2
+PLAYER_POWER = 10
 ENEMY_NUM = 1         # 敵の数
+ENEMY_SPEED = 1
 #ーーーーーーーーーーーーーーーーーーーーーーーーーー
 #---まだ
 def start_page():
@@ -89,7 +93,7 @@ def make_float_land(map_data: "list[list[int]]", add_range: "tuple[int]", num: "
     return map_data
 
 #---修正
-def walled(instance: "object", blocks: "list[tuple[object, int]]") -> None:
+def walled(instance: "object", blocks: "list[tuple[object, int]]", camera_x: "int") -> None:
     """
     壁衝突判定を行う関数
     内容: 壁に衝突したとき、自身の位置を壁端に合わせる。
@@ -97,12 +101,10 @@ def walled(instance: "object", blocks: "list[tuple[object, int]]") -> None:
     """
     for block in blocks:
         if instance.rect.colliderect(block): 
-            if instance.movex > 0: # 右に移動中に衝突
+            if instance.vx > 0: # 右に移動中に衝突
                 instance.rect.right = block.left # 右端をブロックの左端に合わせる
-            elif instance.movex < 0: # 左に移動中に衝突
+            elif instance.vx < 0: # 左に移動中に衝突
                 instance.rect.left = block.right # 左端をブロックの右端に合わせる
-            instance.movex *= -1
-            instance.world[0] = instance.rect.x
 #-------
 
 #---修正
@@ -113,25 +115,18 @@ def gravity(instance: "object", blocks: "list[tuple[object, int]]") -> None:
     引数: 重力を適用するオブジェクト, ブロックのリスト
     """
     instance.vy += GRAVITY # 重力を速度に加算
-    instance.world[1] += instance.vy # Y方向に動かす
-    instance.rect.y = instance.world[1]
+    instance.rect.y += instance.vy # Y方向に動かす
     instance.is_on_ground = False # 毎フレーム「接地していない」と仮定
-    instance.in_on_float = False
     
     for block in blocks:
         if instance.rect.colliderect(block):
                 if instance.vy > 0: # 落下中に衝突
                     instance.rect.bottom = block.top # 足元をブロックの上端に合わせる
-                    instance.world[1] = instance.rect.y
                     instance.hover_num = 0
                     instance.vy = 0 # 落下速度をリセット
-                    if block == 2:
-                        instance.is_on_ground = True   # 接地フラグを立てる
-                    elif block == 3:
-                        instance.is_on_float = True
+                    instance.is_on_ground = True   # 接地フラグを立てる
                 elif instance.vy < 0: # ジャンプ中に衝突
                     instance.rect.top = block.bottom # 頭をブロックの下端に合わせる
-                    instance.world[1] = instance.rect.y
                     instance.vy = 0 # 上昇速度をリセット（頭を打った）
 #------
 
@@ -168,43 +163,49 @@ class Player(pg.sprite.Sprite):
     """
     def __init__(self):
         super().__init__()
+        
         self.img = pg.image.load("fig/yoko1.png")
-        # self.img = pg.transform.rotozoom(self.img, 0,)
         self.flip = pg.transform.flip(self.img, True, False)
-        self.dire_img = {(1, 0) : self.img, (-1, 0) : self.flip}
         self.rect = self.img.get_rect()
+        self.vx = 0
         self.vy = 0
-        self.movex = 0
-        self.world = [self.rect.centerx, self.rect.centery]
-        self.screen_x = 0
-        self.direct = (1, 0)
+        self.dire = (1, 0)
+        self.dire_to_img = {(1, 0) : self.img, (-1, 0) : self.flip}
+
         self.hover_num = 0
+        self.hp = PLAYER_HP
+        self.no_damage_time = NO_DAMAGE_TIME
+        self.power = PLAYER_POWER
+
         self.is_on_ground = False
-        self.is_on_float = False
-        self.move_left = False
-        self.move_right = False
+        self.move_left, self.move_right = False, False
+
+
     
-    def update(self, stage_width: "int", block_rect, camera_x: "int") -> "int":
+    def update(self, stage_width: "int", all_blocks: "list[object]", floar_blocks: "list[object]", camera_x: "int") -> "int":
         """
         自身の座標を更新する関数
         内容: キーに合わせて自身が移動する。移動に合わせてカメラ座標も取得する
         戻り値: カメラ用の係数       
         """  
-        self.movex = 0
         if self.move_left:
-            self.movex -= PLAYER_SPEED
-            self.direct = (-1, 0)
+            self.vx = -PLAYER_SPEED
+            self.dire = (-1, 0)
         if self.move_right:
-            self.movex += PLAYER_SPEED
-            self.direct = (1, 0)
+            self.vx = PLAYER_SPEED
+            self.dire = (1, 0)
 
-        self.rect.x += self.movex # まずX方向に動かす
-        self.screen_x = self.rect.x - camera_x # 画面内のプレイヤーの位置を確認
-        if self.screen_x < LEFT_BOUND: # プレイヤーが左端ならカメラの位置を左にずらす
-            camera_x = self.rect.x - LEFT_BOUND
-        elif self.screen_x > RIGHT_BOUND: #プレイヤーが右端ならカメラの位置を右にずらす
-            camera_x = self.rect.x - RIGHT_BOUND
-        max_camera_x = stage_width * TILE_SIZE_X - SCREEN_WIDTH #カメラの動く範囲を総タイル数と画面のサイズから計算
+        self.rect.x += self.vx
+
+        walled(self, all_blocks, camera_x)
+        gravity(self, floar_blocks)
+
+
+        if self.rect.x - camera_x < LEFT_BOUND: # プレイヤーが左端
+            camera_x = self.rect.x - LEFT_BOUND # オブジェクトのずらし度を決定する。
+        elif self.rect.x - camera_x > RIGHT_BOUND: #プレイヤーが右端ならカメラの位置を右にずらす
+            camera_x = self.rect.x - RIGHT_BOUND 
+        max_camera_x = stage_width * TILE_SIZE_X - SCREEN_WIDTH #カメラが右端を超えないように
         camera_x = max(0, min(camera_x, max_camera_x))
         
         return camera_x
@@ -226,29 +227,37 @@ class Enemy(pg.sprite.Sprite):
     """
     敵を司るクラス
     """
-    def __init__(self, stage_width):
+    def __init__(self):
         super().__init__()
-        self.image = pg.image.load("fig/troia.png")
-        # self.iamge = pg.transform.rotozoom(self.img, 0, 0.1) # 修正予定 画像サイズは元画像の変更の方がよい
-        self.rect = self.image.get_rect()
-        # self.rect.center = (random.randrange(SCREEN_WIDTH, TILE_SIZE_X * stage_width), random.randrange(0, SCREEN_HEIGHT - (TILE_SIZE_Y * 5)))
-        self.world = [400, 0] 
-        self.movex = 1
-        self.vy = 0
-        
-        self.is_on_ground = False
 
-    def update(self, camera_x: "int") -> None:
+        self.image = pg.image.load("fig/troia(extend).png")
+        self.flip = pg.transform.flip(self.image, True, False)
+        self.rect = self.image.get_rect()
+        self.rect.center = (1000, 0) #テスト用で定数
+        self.vx = ENEMY_SPEED
+        self.vy = 0
+        self.dire = (1, 0)
+        self.dire_to_img = {(1, 0): self.image, (-1, 0): self.flip}
+
+        self.hp = 5
+        self.power = 1
+        
+        self.is_on_ground = True
+        self.is_move_left, self.is_move_right = True, False
+
+    def update(self, all_blocks: "list[object]", floar_blocks: "list[object]", camera_x: "int") -> None:
         """
         自身の位置を更新する関数
         """
-        # print(camera_x)
-        # self.rect.x -= scroll_speed
-        self.world[0] -= self.movex
-        self.rect.x = self.world[0]
-        self.rect.y = self.world[1]
-        # self.rect.center = (self.rect.centerx - self.movex, self.rect.centery)        
-        self.rect.x = self.world[0] - camera_x
+        self.rect.x -= self.vx
+
+        for block in all_blocks:
+            if self.rect.colliderect(block):
+                print("irregular")
+                print(f"敵の速度{self.vx}")
+                self.vx *= -1
+                print(f"敵の速度{self.vx}")
+        gravity(self, floar_blocks)
 #------
 
 #---まだ
@@ -263,7 +272,6 @@ class Score:
     def __init__(self):
         self.pic = pg.font.Font(None, 80)
         self.value = 0
-        # txt = self.pic.render(f"スコア: {self.value}", True, (255, 255, 255))
     
     def update(self):
         self.txt = self.pic.render(f"Score: {self.value}", True, (255, 255, 255))
@@ -282,10 +290,6 @@ def main():
     bg_width = bg_img.get_width()
     pg.mixer.music.load("fig/魔王魂(ファンタジー).mp3")
     pg.mixer.music.play(loops = -1)
-
-    # ground_img = pg.image.load("fig/ground2.png")
-    # weeds_img = pg.image.load("fig/weeds(extend).png")
-    # cloud_img = pg.image.load("fig/cloud(extend).png")
 
     map_data = assets.init_map
     map_data = extend(map_data, ADD_STAGE_BLOCK, assets.probs)
@@ -312,15 +316,15 @@ def main():
 
     player = Player() 
     for i in range(ENEMY_NUM):
-        enemys.add(Enemy(len(map_data[0])))
+        enemys.add(Enemy())
     score = Score()
     
-    camera_x = 0 #カメラの位置を初期化
+    camera_x = 0
 
-    # 5. ゲームループ
+    #ーーーーーゲームスタートーーーーー
     while True:
-        
-        # 6. イベント処理 (キー操作など)
+    
+        #ーーーーーイベント取得ーーーーー
         for event in pg.event.get():
             #ゲーム終了
             if event.type == pg.QUIT:
@@ -339,28 +343,23 @@ def main():
             # キーが離された時
             if event.type == pg.KEYUP:
                 if event.key == pg.K_LEFT:
+                    player.vx = 0
                     player.move_left = False
                 if event.key == pg.K_RIGHT:
+                    player.vx = 0
                     player.move_right = False
-
-        walled(player, all_blocks) # 壁衝突判定
-        gravity(player, floar_blocks) # 床衝突判定
-        for i in enemys:
-            walled(i, all_blocks)
-            gravity(i, floar_blocks)
+        #ーーーーーーーーーーーーーーーー
 
         #----修正
-        prev_camera_x = camera_x
-        camera_x = player.update(len(map_data[0]), [surface_rects, floatland_rects], camera_x)
+        camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
         scroll_x = -camera_x % bg_width
-        scroll_speed = camera_x - prev_camera_x
         #-------
 
         screen.blit(bg_img, (scroll_x - bg_width, -100))
         screen.blit(bg_img, (scroll_x, -100))
         #---修正
-        screen.blit(player.dire_img[player.direct], (player.rect.x - camera_x, player.rect.y))
-        enemys.update(camera_x)
+        screen.blit(player.dire_to_img[player.dire], (player.rect.x - camera_x, player.rect.y))
+        enemys.update(all_blocks, floar_blocks, camera_x)
         for enemy in enemys:
             screen.blit(enemy.image, (enemy.rect.centerx - camera_x, enemy.rect.centery))
         #------

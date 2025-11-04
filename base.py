@@ -58,7 +58,7 @@ def start_page(screen: pg.surface, clock: pg.time.Clock) -> int:
 
 # 画面設定
 
-
+#さあ解消を始めよう
 # enemy_image = pygame.image.load("fig/syujinkou_yoko.png")
 # enemy_image = pygame.transform.rotozoom(enemy_image, 0, 0.1) # テスト用の敵を設定
 # enemy_rect = enemy_image.get_rect()
@@ -251,6 +251,16 @@ def no_damage(instance: object, flag: int = 0) -> None:
         instance.no_damage_time -= 1
     else:
         return
+    
+def camera_adjust(instance: object, camera_x: int, stage_width: int) -> int:
+        if instance.rect.x - camera_x < LEFT_BOUND: # プレイヤーが左端
+            camera_x = instance.rect.x - LEFT_BOUND # オブジェクトのずらし度を決定する。
+        elif instance.rect.x - camera_x > RIGHT_BOUND: #プレイヤーが右端ならカメラの位置を右にずらす
+            camera_x = instance.rect.x - RIGHT_BOUND 
+        max_camera_x = stage_width * TILE_SIZE_X - SCREEN_WIDTH #カメラが右端を超えないように
+        camera_x = max(0, min(camera_x, max_camera_x))
+        
+        return camera_x
 
 class Assets:
     def __init__(self):
@@ -294,7 +304,7 @@ class Player(pg.sprite.Sprite):
     """
     def __init__(self):
         super().__init__()
-        
+        self.name = "normal"
         self.original = pg.image.load("fig/yoko1.png")
         # self.img = self.original
         self.flip = pg.transform.flip(self.original, True, False)
@@ -344,6 +354,8 @@ class Player(pg.sprite.Sprite):
         walled(self, all_blocks)
         gravity(self, floar_blocks)
         no_damage(self, 0)
+        # camera_x = camera_adjust(self, camera_x, stage_width)
+        # return camera_x
 
         if self.rect.x - camera_x < LEFT_BOUND: # プレイヤーが左端
             camera_x = self.rect.x - LEFT_BOUND # オブジェクトのずらし度を決定する。
@@ -396,13 +408,13 @@ class Absurb(pg.sprite.Sprite):
         self.rect = self.img.get_rect()
         self.rect.center = ((instance.rect.centerx + 40, instance.rect.centery)) # 描写位置をプレイヤーのすぐ先に設定
 
-    def update(self, player_rect: pg.Rect) -> None:
+    def update(self, instance: object) -> None:
         """
         吸収判定を移動させる関数
         引数: プレイヤーの位置を表す矩形
         """
-        self.rect.centerx = player_rect.centerx + 40 # 描写位置を再設定
-        self.rect.centery = player_rect.centery
+        self.rect.centerx = instance.rect.centerx + 40 # 描写位置を再設定
+        self.rect.centery = instance.rect.centery
 
 class HoverAir(pg.sprite.Sprite):
     def __init__(self, instance, flag, flag_air_dire):
@@ -419,6 +431,351 @@ class HoverAir(pg.sprite.Sprite):
         self.rect.y += 1
         if self.time == 0:
             self.kill()
+
+# ==== 追加：炎の玉 & かーびー ====
+class FireBall(pg.sprite.Sprite):
+    """炎の玉：横に飛び、寿命で消える"""
+    def __init__(self, x, y, direction):
+        super().__init__()
+        try:
+            self.image = pg.image.load("fig/fire.jpg").convert_alpha()
+            self.image = pg.transform.scale(self.image, (20, 20))
+        except Exception:
+            self.image = None  # 画像が無い場合は自前描画
+        # rect は中心位置で受け取るようにする
+        self.rect = pg.Rect(0, 0, 25, 25)
+        self.rect.center = (x, y)
+        self.speed = 12 * direction  # 水平速度
+        # 垂直方向の物理 (重力 + バウンド)
+        self.vy = 0
+        self.gravity = 0.8
+        self.damping = 0.6  # バウンドで減衰する係数
+        # 寿命（フレーム数）
+        self.life = 120  # バウンドさせるため少し長めにする
+
+    def update(self, screen, blocks, stage_width, camera_x) -> bool:
+        # 移動（X 方向）
+        self.rect.x += int(self.speed)
+
+        # ブロックとの水平衝突で反転（壁に当たれば跳ね返る）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                # 衝突の向きによって処理
+                if self.speed > 0:
+                    self.rect.right = block.left
+                else:
+                    self.rect.left = block.right
+                # 水平速度を反転して減衰
+                self.speed = -self.speed * 0.6
+
+        # 垂直方向の物理（重力適用）
+        self.vy += self.gravity
+        self.rect.y += int(self.vy)
+
+        # ブロックとの垂直衝突（地面や天井で跳ね返す）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                if self.vy > 0:
+                    # 落下中にブロックと衝突 => 足元をブロックの上に合わせ、反射
+                    self.rect.bottom = block.top
+                    self.vy = -self.vy * self.damping
+                elif self.vy < 0:
+                    # 上昇中に頭が当たった
+                    self.rect.top = block.bottom
+                    self.vy = 0
+
+        # 寿命減少
+        self.life -= 1
+
+        # 画面外 or 寿命切れで消滅（横にはみ出し過ぎたら消す）
+        if self.life <= 0 or self.rect.right < -50 or self.rect.left > SCREEN_WIDTH * stage_width + 50:
+            return False
+
+        # 描画
+        if self.image:
+            screen.blit(self.image, (self.rect.x - camera_x, self.rect.y))
+        else:
+            # 発光風の炎（画像が無いとき用）
+            import random
+            r = random.randint(200, 255)
+            g = random.randint(60, 150)
+            y = random.randint(0, 60)
+            color = (r, g, y)
+            for i in range(3):
+                radius = max(1, 10 - i * 3)
+                pg.draw.circle(screen, color, (self.rect.x - camera_x, self.rect.y), radius)
+        return True
+
+
+class BreathParticle(pg.sprite.Sprite):
+    """短距離の吐息（短命・ノー重力）"""
+    def __init__(self, x, y, direction):
+        super().__init__()
+        # 向きと遅い速度（近距離ストリーム風）
+        self.facing = direction
+        self.speed = 4 * direction  # 以前より遅くしてストリーム感を出す
+        self.life = 30
+        img = None
+        # 優先して吐息用画像を読み込む（fire_a.pngは参照しない）
+        if direction >= 0:
+            candidates = ("fig/fire_right.png", "fig/fire.jpg")
+        else:
+                candidates = ("fig/fire_left.png", "fig/fire_reft.png", "fig/fire.jpg")
+        for fname in candidates:
+            try:
+                img = pg.image.load(fname).convert_alpha()
+                self.src_name = os.path.basename(fname)
+                break
+            except Exception:
+                img = None
+        if img:
+            # 吐息は横長にして少し大きめに
+            w = 64
+            h = 28
+            img = pg.transform.scale(img, (w, h))
+            # 左向きなら、読み込んだ画像が右向き（または汎用画像）だった場合のみ反転する
+            if direction < 0:
+                src = getattr(self, 'src_name', '')
+                if any(k in src for k in ('fire_right', 'fire.jpg', 'fire-right')):
+                    img = pg.transform.flip(img, True, False)
+            self.image = img
+            self.rect = self.image.get_rect()
+            # 口元に沿わせるため、画像の左端/右端を口の位置に合わせる
+            if direction >= 0:
+                # 右向き: 画像の左端が口になるように設定
+                self.rect.midleft = (x, y)
+            else:
+                # 左向き: 画像の右端が口になるように設定
+                self.rect.midright = (x, y)
+        else:
+            # 画像がなければ円で表現
+            self.image = None
+            self.rect = pg.Rect(0, 0, 12, 12)
+            self.src_name = ""
+            if direction >= 0:
+                self.rect.midleft = (x, y)
+            else:
+                self.rect.midright = (x, y)
+
+    def update(self, screen, stage_width, camera_x) -> bool:
+        # 水平方向に移動
+        self.rect.x += int(self.speed)
+        self.life -= 1
+
+        # 画面外で消える
+        if self.life <= 0:
+            return False
+
+        # 画面外で消える
+        if self.life <= 0 or self.rect.right < -40 or self.rect.left > SCREEN_WIDTH * stage_width + 40:
+            return False
+
+        # 描画（画像があれば画像、無ければ円）
+        if self.image:
+            # 少し上下にゆらぎを入れて炎らしく見せる
+            dy = random.randint(-3, 3)
+            # グロー（薄い半透明の円）を先に描く
+            glow_surf = pg.Surface((self.rect.width * 2, self.rect.height * 2), pg.SRCALPHA)
+            glow_color = (255, 180, 70, 80)
+            pg.draw.ellipse(glow_surf, glow_color, glow_surf.get_rect())
+            screen.blit(glow_surf, ((self.rect.centerx - glow_surf.get_width() // 2) -  camera_x, self.rect.centery - glow_surf.get_height() // 2 + dy))
+            # 本体を描画
+            screen.blit(self.image, (self.rect.x - camera_x, self.rect.y + dy))
+            # screen.blit(self.image, (100, 100))
+        else:
+            color = (255, 160, 60)
+            pg.draw.circle(screen, color, self.rect.center, 6)
+        return True
+
+
+class CrashEffect(pg.sprite.Sprite):
+    """自己中心の爆発エフェクト（非破壊・視覚効果）"""
+    def __init__(self, center):
+        super().__init__()  
+        self.center = center
+        # 少し長めに表示し、範囲を広げる
+        self.life = 26
+        self.max_radius = 140
+        # 可能なら画像を読み込んで爆発に使う
+        self.image = None
+        try:
+            img = pg.image.load("fig/fire_crash.png").convert_alpha()
+            self.image = img
+        except Exception:
+            self.image = None
+
+    def update(self, screen, camera_x) -> bool:
+        t = (20 - self.life) / 20.0
+        radius = int(self.max_radius * t)
+        # 画像があれば画像をスケールしてアルファで描画、無ければ半透明サーフェスで描画
+        if self.image:
+            # スケールサイズは現在の radius に合わせる（直径）
+            size = max(2, radius * 2)
+            try:
+                img = pg.transform.smoothscale(self.image, (size, size))
+            except Exception:
+                img = pg.transform.scale(self.image, (size, size))
+            # フェードアウトするアルファ
+            alpha = int(220 * (1.0 - t))
+            img.set_alpha(alpha)
+            if size > 500:
+                self.kill()
+            screen.blit(img, ((self.center[0] - size // 2) - camera_x, self.center[1] - size // 2))
+        # else:
+        #     surf = pg.Surface((self.max_radius * 2, self.max_radius * 2), pg.SRCALPHA)
+        #     alpha = int(200 * (1.0 - t))
+        #     pg.draw.circle(surf, (255, 180, 80, alpha), (self.max_radius, self.max_radius), max(1, radius))
+        #     screen.blit(surf, (self.center[0] - self.max_radius, self.center[1] - self.max_radius))
+        self.life -= 1
+        return self.life > 0
+
+
+class ExplosionEffect(pg.sprite.Sprite):
+    """壁に当たったときの小規模爆発（視覚効果）"""
+    def __init__(self, center):
+        super().__init__()
+        self.center = center
+        self.life = 12
+        self.max_size = 64
+        self.image = None
+        try:
+            img = pg.image.load("fig/exposion.png").convert_alpha()
+            self.image = img
+        except Exception:
+            self.image = None
+
+    def update(self, screen):
+        t = (12 - self.life) / 12.0
+        size = int(self.max_size * (0.5 + t * 0.5))
+        if self.image:
+            try:
+                img = pg.transform.smoothscale(self.image, (size, size))
+            except Exception:
+                img = pg.transform.scale(self.image, (size, size))
+            alpha = int(255 * (1.0 - t))
+            img.set_alpha(alpha)
+            screen.blit(img, (self.center[0] - size // 2, self.center[1] - size // 2))
+        else:
+            surf = pg.Surface((self.max_size, self.max_size), pg.SRCALPHA)
+            alpha = int(200 * (1.0 - t))
+            pg.draw.circle(surf, (255, 180, 60, alpha), (self.max_size // 2, self.max_size // 2), max(1, size // 2))
+            screen.blit(surf, (self.center[0] - self.max_size // 2, self.center[1] - self.max_size // 2))
+        self.life -= 1
+        return self.life > 0
+
+
+class kirby_fire(Player):
+    """かーびー本体（見た目＋炎の管理だけ。移動や当たり判定は既存ロジックを使用）"""
+    def __init__(self, instance):
+        super().__init__()
+        # 右向き・左向き用の画像をそれぞれ読み込む
+        self.name = "fire"
+        self.img_right = None
+        self.img_left = None
+        try:
+            # 左向き画像として読み込み
+            self.img_right = pg.image.load("fig/kirby_fire.png").convert_alpha()
+            self.img_right = pg.transform.scale(self.img_right, (50, 50))
+            # 右向き画像として読み込み
+            self.img_left = pg.image.load("fig/koukaton2.png").convert_alpha()
+            self.img_left = pg.transform.scale(self.img_left, (50, 50))
+        except Exception:
+            pass  # 画像が読めなければ四角形で代用
+        self.rect = instance.rect  # 既存の player_rect を共有
+        self.rect.size = (28, 28)  # かーびーのサイズに合わせる
+        self.fireballs = []
+        # 吐息（短距離）用
+        self.breaths = []
+        self.breathing = False
+        self._breath_spawn_timer = 0
+        # クラッシュ（範囲攻撃）用
+        self.crashes = []
+    # クールタイム無しにする（いつでも発動可能）
+        # 向き（1=右, -1=左）
+        self.facing = 1
+
+    def handle_input(self, event, move_left, move_right, fireballs, breathes, clashes):
+        # 向き更新
+        if move_left and not move_right:
+            self.facing = -1
+        elif move_right and not move_left:
+            self.facing = 1
+        # Zキーで炎発射（進行方向に飛ぶ）
+        if event.type == pg.KEYDOWN and event.key == pg.K_z:
+            # 発射方向は常にカービィの向きに合わせる（左右双方から出るように）
+            direction = self.facing
+            # 発射位置：口の位置に合わせる（体の前方・少し上）
+            fx = self.rect.centerx + self.facing * (self.rect.width // 2)
+            fy = self.rect.centery - 6
+            fireballs.add(FireBall(fx, fy, direction))
+
+        # Xキーで吐息（押している間持続）
+        if event.type == pg.KEYDOWN and event.key == pg.K_x:
+            self.breathing = True
+            breathes.add(BreathParticle(x=self.rect.centerx + self.facing * (self.rect.width // 2),
+                                        y=self.rect.centery - 4,
+                                        direction=self.facing))
+        if event.type == pg.KEYUP and event.key == pg.K_x:
+            self.breathing = False
+            for breath in breathes:
+                breath.kill()
+                break
+
+        # Cキーでクラッシュ（単発・クールタイム無し）
+        if event.type == pg.KEYDOWN and event.key == pg.K_c:
+            # クールダウンなしで常に発動可能にする
+            clashes.add(CrashEffect(self.rect.center))
+    def draw_and_update(self, screen, explosions, all_blocks, camera_x, fireballs, breathes, crashes, stage_width):
+
+        # 炎の更新＆描画（生存管理）
+        alive = []
+        for fb in fireballs:
+            if fb.update(screen, all_blocks,stage_width, camera_x):
+                if fb.life <= 0:
+                    fb.kill()
+
+        # 吐息のスポーン（押している間）
+        if self.breathing:
+            self._breath_spawn_timer -= 1
+            if self._breath_spawn_timer <= 0:
+                # 発射位置は口のすぐ前（中心から幅の半分だけ前）
+                fx = self.rect.centerx + self.facing * (self.rect.width // 2)
+                fy = self.rect.centery - 4
+                breathes.add(BreathParticle(fx, fy, self.facing))
+                self._breath_spawn_timer = 2  # 連射速度（小さくして連続感を強める）
+
+        # 吐息更新
+        for bp in breathes:
+            if bp.update(screen, stage_width, camera_x):
+                if bp.life < 0:
+                    bp.kill()
+
+        # クラッシュエフェクト更新
+        for ce in crashes:
+            if ce.update(screen, camera_x):
+                if ce.life < 0:
+                    ce.kill()
+
+        # 壁衝突用の小規模爆発エフェクトの更新
+        for ee in explosions:
+            try:
+                if ee.update(screen):
+                    if ee.life < 0:
+                        ee.kill()
+            except Exception:
+                pass
+    # グローバルリストを更新（短命なので他と同じように扱う）
+    # 注意: 物理（walled/gravity）は Player.update 側で一度だけ適用されるため
+    # ここで再度呼び出すと移動や重力が二重に適用されてしまう。
+    # そのため、描画側では物理処理を行わない。
+        # 本体描画（画像があれば画像）
+        if self.img_right and self.img_left:
+            # 向きに応じて適切な画像を選択（左向き=kirby_fire, 右向き=koukaton2）
+            img = self.img_left if self.facing > 0 else self.img_right
+            screen.blit(img, (self.rect.centerx - camera_x, self.rect.centery - TILE_SIZE_Y / 2))
+        else:
+            pg.draw.rect(screen, (50, 200, 50), self.rect)
+# ==== 追加ここまで ====
 
 #---修正
 class Enemy(pg.sprite.Sprite):
@@ -630,6 +987,10 @@ def main():
     player_lead_attacks = pg.sprite.Group()
     bound_balls = pg.sprite.Group()
     absurbs = pg.sprite.Group()
+    explosions = pg.sprite.Group()
+    fireballs = pg.sprite.Group()
+    clashes = pg.sprite.Group()
+    breathes = pg.sprite.Group()
 
     player = Player() 
     for i in range(ENEMY_NUM):
@@ -651,7 +1012,7 @@ def main():
 
         if player.rect.colliderect(goal):
             print("goal!!")
-            respond = game_clear(screen, clock, 1)
+            respond = game_clear(screen, clock)
             if respond == -1:
                 return
             else:
@@ -660,6 +1021,7 @@ def main():
                 hovers = pg.sprite.Group()
                 player_lead_attacks = pg.sprite.Group()
                 bound_balls = pg.sprite.Group()
+                breathes = pg.sprite.Group()
 
                 player = Player() 
                 for i in range(ENEMY_NUM):
@@ -720,6 +1082,9 @@ def main():
                         player_lead_attacks.add(player.panch())
                 if event.key == pg.K_a:
                     absurbs.add(Absurb(player))
+                if player.name == "fire":
+                    player.handle_input(event, player.move_left, player.move_right, fireballs, breathes, clashes)
+
 
             # キーが離された時
             if event.type == pg.KEYUP:
@@ -731,8 +1096,14 @@ def main():
                     player.move_right = False
                 if event.key == pg.K_a:
                     absurbs.empty()
+                if player.name == "fire":
+                    player.handle_input(event, player.move_left, player.move_right, fireballs, breathes, clashes)
+
         #ーーーーーーーーーーーーーーーー
         heart_num = len(hearts)
+
+
+
         for enemy in pg.sprite.spritecollide(player, enemys, False): 
             if player.no_damage_time == 0:
                 player.hp -= 1
@@ -741,10 +1112,16 @@ def main():
                     heart_num -= 1
                 no_damage(player,1)
 
-        for enemy in pg.sprite.groupcollide(absurbs, enemys, False, False).keys():
-            enemy.size -= 0.05
-            enemy.img = pg.transform.rotozoom(enemy.original, 0, enemy.size)
-            enemy.rect.centery += 10
+        collisions = pg.sprite.groupcollide(absurbs, enemys, False, False)
+        for absorber, hit_list in collisions.items():
+            for enemy in hit_list:
+                enemy.size -= 0.05
+                enemy.patarn_to_img[enemy.patarn] = pg.transform.rotozoom(enemy.patarn_to_img[enemy.patarn], 0, enemy.size)
+                enemy.rect.centery += 10
+                if enemy.size <= 0:
+                    enemy.kill()
+                    player = kirby_fire(player)
+
 
 
         for bound_boll in bound_balls:
@@ -767,7 +1144,10 @@ def main():
 
         #----修正
         # no_damage(player, 0)
-        camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
+        if player.name == "normal":
+            camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
+        elif player.name == "fire":
+            camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
         # for i in player_lead_attacks:
         #     i.update(player)
         #     screen.blit(i.img, (100, 100))#(player.rect.x + 100, player.rect.y))
@@ -777,7 +1157,12 @@ def main():
         screen.blit(bg_img, (scroll_x - bg_width, -100))
         screen.blit(bg_img, (scroll_x, -100))
         #---修正
-        screen.blit(player.patarn_to_img[player.patarn], (player.rect.x - camera_x, player.rect.y))
+        if player.name == "normal":
+            screen.blit(player.patarn_to_img[player.patarn], (player.rect.x - camera_x, player.rect.y))
+        elif player.name == "fire":
+            player.draw_and_update(screen, explosions, all_blocks, camera_x, fireballs, breathes, clashes, len(map_data[0]))
+
+        # kirby.draw_and_update(screen)
         hovers.update()
         for hover in hovers:
             screen.blit(hover.image, (hover.rect.x - camera_x, hover.rect.y))
@@ -787,7 +1172,7 @@ def main():
 
         for i in absurbs:
             i.update(player)
-            screen.blit(i.img, i.rect)
+            screen.blit(i.img, (i.rect.x - camera_x, i.rect.y))
 
 
         for i in bound_balls:
@@ -826,3 +1211,22 @@ if __name__ == "__main__":
     main()
     pg.quit()
     sys.exit()
+# 3. ステージの「当たり判定用の四角形(Rect)」リストを作成
+# (ゲーム開始時に一度だけ計算する)
+#途中なのか⁈
+
+# グローバル：壁衝突時の小規模爆発エフェクトを格納するリスト
+ # かーびーオブジェクトを作成
+
+
+# 5. ゲームループ
+        #これを適切な箇所で呼び出す
+
+
+        
+    # プレイヤーを描画
+
+    
+ 
+
+#終わりか⁈

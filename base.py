@@ -289,10 +289,10 @@ class kirby_fire:
         self.img_right = None
         self.img_left = None
         try:
-            # 右向き画像
+            # 左向き画像として読み込み
             self.img_right = pg.image.load("fig/kirby_fire.png").convert_alpha()
             self.img_right = pg.transform.scale(self.img_right, (50, 50))
-            # 左向き画像
+            # 右向き画像として読み込み
             self.img_left = pg.image.load("fig/koukaton2.png").convert_alpha()
             self.img_left = pg.transform.scale(self.img_left, (50, 50))
         except Exception:

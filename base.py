@@ -29,17 +29,15 @@ clock = pygame.time.Clock()
 
 class BombEnemy(pygame.sprite.Sprite):
     """
-    爆弾の敵に関するクラス（描画・床判定・投擲タイマー）
+    爆弾の敵に関するクラス
     """
     def __init__(self):
         super().__init__()
         bomb_img = pygame.image.load("fig/bakudan.png")
         self.image = pygame.transform.rotozoom(bomb_img, 0, 0.125)
-        # 当たり用 rect と表示用 rect を保持（既存コードと互換）
         self.rect = pygame.Rect(800, 300, TILE_SIZE, TILE_SIZE)
         self.image_rect = self.image.get_rect()
         self.image_rect.center = self.rect.center
-        # 物理量
         self.vy = 0.0
         self.on_ground = False
         # 次に爆弾を投げるフレーム
@@ -47,8 +45,7 @@ class BombEnemy(pygame.sprite.Sprite):
 
     def update(self, blocks):
         """
-        重力処理とブロックとの衝突判定（落下・接地管理）
-        blocks: block_rects（マップの矩形リスト）を想定
+        重力処理とブロックとの衝突判定
         """
         # 重力加算（接地していなければ落下）
         if not self.on_ground:
@@ -68,14 +65,13 @@ class BombEnemy(pygame.sprite.Sprite):
 
     def draw(self, screen):
         """
-        爆弾の敵を描画（image_rect を用いる既存の描画仕様に合わせる）
+        爆弾の敵を描画
         """
         screen.blit(self.image, self.image_rect)
 
     def get_throw_velocity(self) -> tuple[float, float]:
         """
-        プレイヤー方向への投擲初速ベクトルを返す（長さ = speed）
-        戻り値: (vx, vy)
+        プレイヤー方向への投擲初速ベクトルを返す
         """
         dx = player_rect.centerx - self.rect.centerx
         dy = player_rect.centery - self.rect.centery
@@ -88,21 +84,19 @@ class BombEnemy(pygame.sprite.Sprite):
 
 class Bomb(pygame.sprite.Sprite):
     """
-    投げられた爆弾（移動・簡易重力）
-    コンストラクタは BombEnemy インスタンスを受け取り初期位置・角度を決定する。
+    投げられた爆弾に関するクラス
     """
     def __init__(self, bomb_enemy: BombEnemy):
         super().__init__()
-        # 爆弾の初速ベクトル（BombEnemy 側で速さを乗せた vx, vy を返す）
+        # 爆弾の初速ベクトル
         vx, vy = bomb_enemy.get_throw_velocity()
         self.vx = vx
         self.vy = vy
         # 画像と角度合わせ
         bomb_img = pygame.image.load("fig/bom3.png")
         angle = math.degrees(math.atan2(-self.vy, self.vx))
-        self.image = pygame.transform.rotozoom(bomb_img, angle, 0.125)
+        self.image = pygame.transform.rotozoom(bomb_img, angle, 0.0625)
         self.rect = self.image.get_rect()
-        # 発射元の表示中心を起点に少し外にオフセット
         self.rect.center = bomb_enemy.image_rect.center
         offset = max(bomb_enemy.rect.width, bomb_enemy.rect.height) // 2 + 6
         if not (vx == 0 and vy == 0):
@@ -111,16 +105,49 @@ class Bomb(pygame.sprite.Sprite):
                 self.rect.centerx += int(vx / norm * offset)
                 self.rect.centery += int(vy / norm * offset)
 
+        # 爆発状態管理
+        self.exploded = False
+        self.boom_life = 0  # 爆発表示残フレーム数
+
     def update(self, blocks):
         """
-        爆弾の移動（等速移動 + 少しの重力）と位置更新
-        blocks 引数は現状未使用だが既存仕様に合わせて受け取る
+        爆弾の移動（等速移動 + 少しの重力）と位置更新。
+        地面（blocks）と衝突したら fig/boom.png に差し替えて一定フレーム表示後に消滅する。
         """
+        if self.exploded:
+            # 爆発中はカウントダウンして寿命が尽きたら削除
+            self.boom_life -= 1
+            if self.boom_life <= 0:
+                self.kill()
+            return
+
         # 少し重力を加えて落下させる
         self.vy += GRAVITY * 0.5
         # 位置更新（小数切り捨てで位置を進める）
         self.rect.x += int(self.vx)
         self.rect.y += int(self.vy)
+
+        # 地面との衝突判定（衝突したら爆発表示に移行）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                # 衝突前の爆弾中心を保存（boom をここから表示する）
+                old_center = self.rect.center
+                # boom 画像に切り替え
+                try:
+                    boom_img = pygame.image.load("fig/boom.png")
+                except Exception:
+                    boom_img = None
+
+                if boom_img:
+                    # 爆発画像を適切なスケールで読み込み、爆弾の中心に合わせる
+                    self.image = pygame.transform.rotozoom(boom_img, 0, 0.125)
+                    self.rect = self.image.get_rect(center=old_center)
+                # 移動停止して爆発状態に切替
+                self.vx = 0.0
+                self.vy = 0.0
+                self.exploded = True
+                self.boom_life = 30  # 表示フレーム（必要に応じて調整）
+                break
 
     def draw(self, screen):
         screen.blit(self.image, self.rect)
@@ -128,10 +155,7 @@ class Bomb(pygame.sprite.Sprite):
 
 class SlotEnemy(pygame.sprite.Sprite):
     """
-    スロットの敵（BombEnemy と同様の初期位置設定をコンストラクタで可能に）
-    - コンストラクタで (x, y) を与えればその座標を中心に初期配置する
-    - set_position も引き続き使用可能
-    - 重力・ブロック判定は行わない（仕様通り）
+    スロットの敵に関するクラス
     """
     def __init__(self, x: int | None = None, y: int | None = None):
         super().__init__()
@@ -157,16 +181,11 @@ class SlotEnemy(pygame.sprite.Sprite):
         self.weapon_speed = 8.0
 
     def set_position(self, x: int, y: int):
-        """外部から座標で位置を指定する（以降はその座標を基準にする）"""
         self.rect.centerx = int(x)
         self.rect.centery = int(y)
         self.image_rect.center = self.rect.center
 
     def update(self, blocks=None):
-        """
-        BombEnemy と同様に update メソッドを持つが，
-        重力やブロック判定は行わない（等速移動のみ対応）
-        """
         if self.vx != 0.0 or self.vy != 0.0:
             self.rect.x += int(self.vx)
             self.rect.y += int(self.vy)
@@ -178,7 +197,7 @@ class SlotEnemy(pygame.sprite.Sprite):
 
 class FireEnemy(pygame.sprite.Sprite):
     """
-    炎の敵に関するクラス（描画・床判定・BombEnemyと同様の物理演算）
+    炎の敵に関するクラス
     """
     def __init__(self):
         super().__init__()
@@ -198,11 +217,6 @@ class FireEnemy(pygame.sprite.Sprite):
         self.weapon_speed = 6.0  # 弾の速度
 
     def update(self, blocks):
-        """
-        重力処理とブロックとの衝突判定（落下・接地管理）
-        blocks: block_rects（マップの矩形リスト）を想定
-        BombEnemy と同様の実装
-        """
         # 重力加算（接地していなければ落下）
         if not self.on_ground:
             self.vy += GRAVITY
@@ -220,15 +234,11 @@ class FireEnemy(pygame.sprite.Sprite):
                     self.image_rect.center = self.rect.center
 
     def draw(self, screen):
-        """
-        炎の敵を描画（image_rect を用いる既存の描画仕様に合わせる）
-        """
         screen.blit(self.image, self.image_rect)
 
 class SlotWeapon(pygame.sprite.Sprite):
     """
-    スロットから発射される弾（直線移動・追尾無し）
-    コンストラクタで位置と速度を受け取り、update で等速移動する。
+    スロットから発射される弾
     """
     def __init__(self, sx: int, sy: int, vx: float, vy: float):
         super().__init__()
@@ -250,7 +260,7 @@ class SlotWeapon(pygame.sprite.Sprite):
 
 class FireWeapon(pygame.sprite.Sprite):
     """
-    炎の敵から発射される弾（X軸等速、Y軸は正弦波で揺れる）
+    炎の敵から発射される弾
     """
     def __init__(self, sx: int, sy: int, vx: float):
         super().__init__()
@@ -259,16 +269,12 @@ class FireWeapon(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.rect.center = (int(sx), int(sy))
         self.vx = float(vx)  # X方向速度（一定）
-        self.base_y = float(sy)  # Y座標の基準位置
+        self.base_y = float(sy - 80)  # Y座標の基準位置
         self.time = 0  # 正弦波の時間パラメータ
         
     def update(self, blocks=None):
-        """
-        X軸: 等速直線運動
-        Y軸: 基準位置から±10の範囲で正弦波移動
-        """
         self.rect.x += int(self.vx)
-        # 正弦波でY座標を変化（振幅10ピクセル）
+        # Y座標(振幅10ピクセルの範囲で動かす）
         self.time += 0.1
         self.rect.y = int(self.base_y + math.sin(self.time) * 10)
 
@@ -331,16 +337,6 @@ bombs = pygame.sprite.Group()
 slot_enemies = pygame.sprite.Group()
 # スロットから発射される弾のグループ
 slot_weapons = pygame.sprite.Group()
-# --- 追加：最初から座標でスロット敵を生成して配置（必要に応じて座標を編集してください） ---
-#SLOT_INITIAL_POSITIONS = [
-#    (900, 150),
-#]
-#
-#for pos in SLOT_INITIAL_POSITIONS:
-#    sx, sy = pos
-#    # コンストラクタで初期座標を与えて生成（BombEnemy と同じようにクラスから初期位置設定可能）
-#    slot = SlotEnemy(sx, sy)
-#    slot_enemies.add(slot)
 slot_enemies.add(SlotEnemy())
 
 # タイマーを初期化（tmr が未定義だったため追加）

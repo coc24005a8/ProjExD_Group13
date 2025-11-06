@@ -1,10 +1,10 @@
-import pygame
+import pygame as pg
 import os
 import random 
 
 # 1. 定数と初期設定
-pygame.init() 
-pygame.font.init() 
+pg.init() 
+pg.font.init() 
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -33,15 +33,15 @@ CYAN_TEXT = (0, 255, 255)
 
 # 頭上に表示する数字用のフォント
 try:
-    attack_font = pygame.font.SysFont(None, 40)
+    attack_font = pg.font.SysFont(None, 40)
 except Exception as e:
     print(f"フォントの読み込みに失敗: {e}。デフォルトフォントを使用します。")
-    attack_font = pygame.font.Font(None, 40) 
+    attack_font = pg.font.Font(None, 40) 
 
 # 画面設定
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("2Dアクションゲーム デモ (Zキーで攻撃 - 5%で超特大！)")
-clock = pygame.time.Clock()
+screen = pg.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pg.display.set_caption("2Dアクションゲーム デモ (Zキーで攻撃 - 5%で超特大！)")
+clock = pg.time.Clock()
 
 # 2. ステージデータ (省略... 元のコードと同じ)
 map_data = [
@@ -67,24 +67,24 @@ block_rects = []
 for y, row in enumerate(map_data):
     for x, tile_type in enumerate(row):
         if tile_type == 1:
-            block_rects.append(pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE))
+            block_rects.append(pg.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE))
 
 # 4. プレイヤー設定
 player_width = (TILE_SIZE // 2) * 3  # 幅 60
 player_height = TILE_SIZE * 3        # 高さ 120
-player_rect = pygame.Rect(100, 100, player_width, player_height) 
+player_rect = pg.Rect(100, 100, player_width, player_height) 
 
 # --- 画像読み込みと左右反転 ---
 try:
-    player_image_original = pygame.image.load("カービィカジノ吸収.png")
-    player_image_right = pygame.transform.scale(player_image_original, (player_width, player_height))
-    player_image_left = pygame.transform.flip(player_image_right, True, False)
-except (pygame.error, FileNotFoundError) as e:
+    player_image_original = pg.image.load("カービィカジノ吸収.png")
+    player_image_right = pg.transform.scale(player_image_original, (player_width, player_height))
+    player_image_left = pg.transform.flip(player_image_right, True, False)
+except (pyg.error, FileNotFoundError) as e:
     if isinstance(e, FileNotFoundError):
         print("プレイヤー画像ファイル 'カービィカジノ吸収.png' が見つかりません。")
     else:
         print(f"プレイヤー画像の読み込みに失敗しました: {e}")
-    player_image_right = pygame.Surface((player_width, player_height))
+    player_image_right = pg.Surface((player_width, player_height))
     player_image_right.fill((50, 200, 50))
     player_image_left = player_image_right.copy() 
 
@@ -95,23 +95,23 @@ bullet_images = {} # 弾の画像を格納する辞書
 
 # 弾の種類とファイル名、サイズを定義
 bullet_configs = {
-    1: {"file": "きいろ.jpg", "size": (TILE_SIZE // 2, TILE_SIZE // 2)},      # タイプ1 (黄)
-    2: {"file": "あお.jpg", "size": (TILE_SIZE // 2 + 10, TILE_SIZE // 2 + 10)}, # タイプ2 (青)
-    3: {"file": "あか.jpg", "size": (TILE_SIZE // 2 + 20, TILE_SIZE // 2 + 20)},   # タイプ3 (赤)
-    99999: {"file": "くろ.jpg", "size": (TILE_SIZE * 2, TILE_SIZE * 2)}    # 超特大 (黒)
+    1: {"file": "きいろ.png", "size": (TILE_SIZE // 2, TILE_SIZE // 2)},      # タイプ1 (黄)
+    2: {"file": "あお.png", "size": (TILE_SIZE // 2 + 10, TILE_SIZE // 2 + 10)}, # タイプ2 (青)
+    3: {"file": "あか.png", "size": (TILE_SIZE // 2 + 20, TILE_SIZE // 2 + 20)},   # タイプ3 (赤)
+    99999: {"file": "くろ.png", "size": (TILE_SIZE * 15, TILE_SIZE * 15)}    # 超特大 (黒)
 }
 
 for type_key, config in bullet_configs.items():
     try:
         # 画像を読み込む (.jpgは透過情報がないため .convert() が最適ですが、
         # .convert_alpha() でも問題なく動作します)
-        img_original = pygame.image.load(config["file"]).convert_alpha()
-        bullet_images[type_key] = pygame.transform.scale(img_original, config["size"])
-    except (pygame.error, FileNotFoundError) as e:
+        img_original = pg.image.load(config["file"]).convert_alpha()
+        bullet_images[type_key] = pg.transform.scale(img_original, config["size"])
+    except (pg.error, FileNotFoundError) as e:
         # エラーメッセージも正しいファイル名に修正
         print(f"弾画像ファイル '{config['file']}' の読み込みに失敗しました: {e}") 
-        # エラー時は代替として赤い四角形を生成
-        alt_surface = pygame.Surface(config["size"], pygame.SRCALPHA) # アルファチャンネル付き
+        #エラー時は代替として赤い四角形を生成
+        alt_surface = pg.Surface(config["size"], pg.SRCALPHA) # アルファチャンネル付き
         alt_surface.fill((255, 0, 0, 128)) # 半透明な赤
         bullet_images[type_key] = alt_surface
 # ----------------------------------------
@@ -132,21 +132,21 @@ running = True
 while running:
     
     # 6. イベント処理 (キー操作など)
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
+    for event in pg.event.get():
+        if event.type == pg.QUIT:
             running = False
         
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_LEFT:
+        if event.type == pg.KEYDOWN:
+            if event.key == pg.K_LEFT:
                 player_move_left = True
-            if event.key == pygame.K_RIGHT:
+            if event.key == pg.K_RIGHT:
                 player_move_right = True
-            if event.key == pygame.K_SPACE and is_on_ground:
+            if event.key == pg.K_SPACE and is_on_ground:
                 player_velocity_y = JUMP_STRENGTH 
                 is_on_ground = False
                 
             # ★★★ 攻撃キー (Zキー) が押された時 ★★★
-            if event.key == pygame.K_z:
+            if event.key == pg.K_z:
                 actual_attack_type = current_attack_type
                 
                 bullet_image = bullet_images.get(actual_attack_type)
@@ -159,7 +159,7 @@ while running:
                 start_x = player_rect.centerx - bullet_width // 2 
                 start_y = player_rect.centery - bullet_height // 2 
                 
-                bullet_rect = pygame.Rect(start_x, start_y, bullet_width, bullet_height)
+                bullet_rect = pg.Rect(start_x, start_y, bullet_width, bullet_height)
                 
                 bullets.append([bullet_rect, bullet_image, player_direction, actual_attack_type])
                 
@@ -171,10 +171,10 @@ while running:
                     current_attack_type = next_attack_candidate 
             # ★★★★★★★★★★★★★★★★★★★★★★★
 
-        if event.type == pygame.KEYUP:
-            if event.key == pygame.K_LEFT:
+        if event.type == pg.KEYUP:
+            if event.key == pg.K_LEFT:
                 player_move_left = False
-            if event.key == pygame.K_RIGHT:
+            if event.key == pg.K_RIGHT:
                 player_move_right = False
 
     # 7. プレイヤーのロジック更新 (省略... 元と同じ)
@@ -223,7 +223,7 @@ while running:
     screen.fill(WHITE) 
     
     for block in block_rects:
-        pygame.draw.rect(screen, BROWN, block)
+        pg.draw.rect(screen, BROWN, block)
         
     screen.blit(player_image_current, player_rect) 
     
@@ -252,8 +252,8 @@ while running:
         screen.blit(bullet_image_to_draw, bullet_rect)
     # ★★★★★★★★★★★★★★
 
-    pygame.display.flip()
+    pg.display.flip()
     
     clock.tick(60) 
 
-pygame.quit()
+pg.quit()

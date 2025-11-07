@@ -2,6 +2,7 @@ import pygame as pg
 import os
 import sys
 import random
+import math
 
 #ーーーーーーーーー1.定数と初期設定ーーーーーーーーー
 import time
@@ -47,7 +48,7 @@ CYAN_TEXT = (0, 255, 255)
 # ========================================
 try:
     c0c24001_bomb_image = pg.image.load(os.path.join("img", "bom3.png")).convert_alpha()
-    c0c24001_bomb_image = pg.transform.smoothscale(c0c24001_bomb_image, (TILE_SIZE, TILE_SIZE))
+    c0c24001_bomb_image = pg.transform.smoothscale(c0c24001_bomb_image, (TILE_SIZE_X, TILE_SIZE_Y))
 except Exception:
     # 画像がない場合は黒い円で代替
             # c0c24001_bomb_image = pg.Surface((TILE_SIZE, TILE_SIZE), pg.SRCALPHA)
@@ -204,13 +205,7 @@ def start_page(screen: pg.surface, clock: pg.time.Clock) -> int:
         pg.display.update()
         clock.tick(60)
 
-
-
-# 画面設定
-# 色の定義
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-GREEN = (50, 200, 50)   # プレイヤーの色
+# ループが終了したらpgを終了
 BROWN = (139, 69, 19)   # ブロックの色
 RED = (255, 0, 0)       # 爆発エフェクトの色
 ORANGE = (255, 165, 0)  # 爆発エフェクトの色
@@ -1245,6 +1240,316 @@ class Enemy(pg.sprite.Sprite):
         gravity(self, floar_blocks)
         # self.rect.centery -= (TILE_SIZE_Y/2)
 #------
+class BombEnemy(pg.sprite.Sprite):
+    """
+    爆弾の敵に関するクラス
+    """
+    def __init__(self):
+        super().__init__()
+        self.size = 1.0
+        bomb_img = pg.image.load("fig/bakudan.png")
+        self.image = pg.transform.rotozoom(bomb_img, 0, 1)
+        self.flip = pg.transform.flip(self.image, True, False)
+        self.rect = pg.Rect(800, 300, TILE_SIZE_X, TILE_SIZE_Y)
+        self.image_rect = self.image.get_rect(center=self.rect.center)
+        self.vx = random.choice([-3, 3])
+        # --- 追加: 垂直速度と接地フラグを初期化（プレイヤーと同様） ---
+        self.vy = 0.0
+        self.on_ground = False
+        self.next_throw = random.randint(60, 120)
+        self.patarn = (1, 0, "normal")
+        self.patarn_to_img = {(1, 0, "normal"): self.image, (-1, 0, "normal"): self.flip,
+                              (1, 0, "no_damage"): pg.transform.laplacian(self.image), (1, 0, "no_damage"): pg.transform.laplacian(self.flip),
+                              }
+
+    def update(self, blocks):
+        # 横移動
+        self.rect.x += int(self.vx)
+        self.image_rect.center = self.rect.center
+
+        # ブロックとの横衝突（反転）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                if self.vx > 0:
+                    self.rect.right = block.left
+                else:
+                    self.rect.left = block.right
+                self.vx = -self.vx
+                self.image_rect.center = self.rect.center
+                break
+
+        # Y方向：重力を加算して移動
+        self.vy += GRAVITY
+        self.rect.y += int(self.vy)
+
+        # Y方向の衝突チェック
+        self.on_ground = False
+        for block in blocks:
+            if self.rect.colliderect(block):
+                if self.vy > 0:  # 落下中に衝突
+                    self.rect.bottom = block.top
+                    self.vy = 0
+                    self.on_ground = True
+                    self.image_rect.center = self.rect.center
+                elif self.vy < 0:  # 上昇中に衝突
+                    self.rect.top = block.bottom
+                    self.vy = 0
+                    self.image_rect.center = self.rect.center
+                break
+
+    def draw(self, screen):
+        screen.blit(self.image, self.image_rect)
+
+    def get_throw_velocity(self, instance) -> tuple[float, float]:
+        """
+        プレイヤー方向への投擲初速ベクトルを返す（既存仕様維持）
+        """
+        dx = instance.rect.centerx - self.rect.centerx
+        dy = instance.rect.centery - self.rect.centery
+        dist = math.hypot(dx, dy)
+        if dist == 0:
+            return 0.0, 0.0
+        speed = 8.0
+        return dx / dist * speed, dy / dist * speed
+
+
+class Bomb(pg.sprite.Sprite):
+    """
+    投げられた爆弾に関するクラス
+    """
+    def __init__(self, bomb_enemy: BombEnemy, instance):
+        super().__init__()
+        # 爆弾の初速ベクトル
+        vx, vy = bomb_enemy.get_throw_velocity(instance)
+        self.vx = vx
+        self.vy = vy -0.5
+        # 画像と角度合わせ
+        self.img = pg.image.load("fig/bom3.png")
+        angle = math.degrees(math.atan2(-self.vy, self.vx))
+        self.image = pg.transform.rotozoom(self.img, angle, 1)
+        self.rect = self.image.get_rect()
+        
+        # 発射位置を敵の中心から上方向にオフセット
+        self.rect.center = bomb_enemy.image_rect.center
+        self.rect.y -= 20  # 上方向に20ピクセル移動
+        
+        # 発射方向へのオフセット
+        offset = max(bomb_enemy.rect.width, bomb_enemy.rect.height) // 2 + 6
+        if not (vx == 0 and vy == 0):
+            norm = math.hypot(vx, vy)
+            if norm != 0:
+                self.rect.centerx += int(vx / norm * offset)
+                self.rect.centery += int(vy / norm * offset)
+
+        # 爆発状態管理
+        self.exploded = False
+        self.boom_life = 0  # 爆発表示残フレーム数
+
+    def update(self, blocks):
+        if self.exploded:
+            # 爆発中はカウントダウンして寿命が尽きたら削除
+            self.boom_life -= 1
+            if self.boom_life <= 0:
+                self.kill()
+            return
+
+        # 少し重力を加えて落下させる
+        self.vy += GRAVITY * 0.08
+        # 位置更新（小数切り捨てで位置を進める）
+        self.rect.x += int(self.vx)
+        self.rect.y += int(self.vy)
+
+        # 地面との衝突判定（衝突したら爆発表示に移行）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                # 衝突前の爆弾中心を保存（boom をここから表示する）
+                old_center = self.rect.center
+                # boom 画像に切り替え
+                try:
+                    boom_img = pg.image.load("fig/boom.png")
+                except Exception:
+                    boom_img = None
+
+                if boom_img:
+                    self.image = pg.transform.rotozoom(boom_img, 0, 1)
+                    self.rect = self.image.get_rect(center=old_center)
+                # 移動停止して爆発状態に切替
+                self.vx = 0.0
+                self.vy = 0.0
+                self.exploded = True
+                self.boom_life = 30  # 表示フレーム（必要に応じて調整）
+                break
+
+    def draw(self, screen):
+        screen.blit(self.image, self.rect)
+
+
+class SlotEnemy(pg.sprite.Sprite):
+    """
+    スロットの敵に関するクラス
+    """
+    def __init__(self, x: int | None = None, y: int | None = None):
+        super().__init__()
+        self.size = 1.0
+        slot_img = pg.image.load("fig/slot.png")
+        self.image = pg.transform.rotozoom(slot_img, 0, 1)
+        self.flip = pg.transform.flip(self.image, True, False)
+        self.rect = pg.Rect(800, 150, TILE_SIZE_X, TILE_SIZE_Y)
+        self.image_rect = self.image.get_rect()
+        self.image_rect.center = self.rect.center
+        self.patarn = (1, 0, "normal")
+        self.patarn_to_img = {(1, 0, "normal"): self.image, (-1, 0, "normal"): self.flip,
+                              (1, 0, "no_damage"): pg.transform.laplacian(self.image), (1, 0, "no_damage"): pg.transform.laplacian(self.flip),
+                              }
+
+        if x is not None and y is not None:
+            self.rect.centerx = int(x)
+            self.rect.centery = int(y)
+            self.image_rect.center = self.rect.center
+
+        # 移動速度を遅めに設定
+        self.speed = 1.5  # プレイヤーの移動速度(5)より遅く
+        self.vx = 0.0
+        self.vy = 0.0
+
+        self.next_shot = random.randint(60, 180)
+        self.weapon_speed = 8.0
+
+    def update(self, blocks, instance):
+        # プレイヤーの方向を計算
+        dx = instance.rect.centerx - self.rect.centerx
+        dy = 0  # Y方向は移動しない
+
+        # 方向の正規化（単位ベクトル化）
+        dist = abs(dx)
+        if dist != 0:
+            # X方向の速度を設定（正規化して speed を掛ける）
+            self.vx = (dx / dist) * self.speed
+
+        # 横移動
+        self.rect.x += int(self.vx)
+        self.image_rect.center = self.rect.center
+
+        # ブロックとの横衝突で反転
+        if blocks:
+            for block in blocks:
+                if self.rect.colliderect(block):
+                    if self.vx > 0:
+                        self.rect.right = block.left
+                    else:
+                        self.rect.left = block.right
+                    self.vx = -self.vx
+                    self.image_rect.center = self.rect.center
+                    break
+
+    def draw(self, screen):
+        screen.blit(self.image, self.image_rect)
+
+
+class FireEnemy(pg.sprite.Sprite):
+    """
+    炎の敵に関するクラス
+    """
+    def __init__(self):
+        super().__init__()
+        self.size = 1.0
+        fire_img = pg.image.load("fig/fire_enemy.png")
+        fire_img = pg.transform.flip(fire_img, True, False)
+        self.image = pg.transform.rotozoom(fire_img, 0, 1)
+        self.flip = pg.transform.flip(self.image, True, False)
+        self.rect = pg.Rect(700, 300, TILE_SIZE_X, TILE_SIZE_Y)
+        self.image_rect = self.image.get_rect(center=self.rect.center)
+        self.vx = random.choice([-2, 2])
+        # --- 追加: 垂直速度と接地フラグを初期化 ---
+        self.vy = 0.0
+        self.on_ground = False
+        self.next_shot = random.randint(60, 180)
+        self.weapon_speed = 6.0
+        self.patarn = (1, 0, "normal")
+        self.patarn_to_img = {(1, 0, "normal"): self.image, (-1, 0, "normal"): self.flip,
+                              (1, 0, "no_damage"): pg.transform.laplacian(self.image), (1, 0, "no_damage"): pg.transform.laplacian(self.flip),
+                              }
+
+    def update(self, blocks):
+        # 横移動
+        self.rect.x += int(self.vx)
+        self.image_rect.center = self.rect.center
+
+        # ブロックとの横衝突（反転）
+        for block in blocks:
+            if self.rect.colliderect(block):
+                if self.vx > 0:
+                    self.rect.right = block.left
+                else:
+                    self.rect.left = block.right
+                self.vx = -self.vx
+                self.image_rect.center = self.rect.center
+                break
+
+        # Y方向：重力を加算して移動
+        self.vy += GRAVITY
+        self.rect.y += int(self.vy)
+
+        # Y方向の衝突チェック（プレイヤーと同じロジック）
+        self.on_ground = False
+        for block in blocks:
+            if self.rect.colliderect(block):
+                if self.vy > 0:
+                    self.rect.bottom = block.top
+                    self.vy = 0
+                    self.on_ground = True
+                    self.image_rect.center = self.rect.center
+                elif self.vy < 0:
+                    self.rect.top = block.bottom
+                    self.vy = 0
+                    self.image_rect.center = self.rect.center
+                break
+
+    def draw(self, screen):
+        screen.blit(self.image, self.image_rect)
+
+class SlotWeapon(pg.sprite.Sprite):
+    """
+    スロットから発射される弾
+    """
+    def __init__(self, sx: int, sy: int, vx: float, vy: float):
+        super().__init__()
+        weapon_img = pg.image.load("fig/slot_weapon.png")
+        angle = math.degrees(math.atan2(-vy, vx))
+        self.image = pg.transform.rotozoom(weapon_img, angle, 1)
+        self.rect = self.image.get_rect()
+        self.rect.center = (int(sx), int(sy))
+        self.vx = float(vx)
+        self.vy = float(vy)
+
+    def update(self, blocks=None):
+        self.rect.move_ip(int(self.vx), int(self.vy))
+
+    def draw(self, screen):
+        screen.blit(self.image, self.rect)
+
+class FireWeapon(pg.sprite.Sprite):
+    """
+    炎の敵から発射される弾
+    """
+    def __init__(self, sx: int, sy: int, vx: float):
+        super().__init__()
+        weapon_img = pg.image.load("fig/fire_nageru.png")
+        self.image = pg.transform.rotozoom(weapon_img, 0, 1)
+        self.rect = self.image.get_rect()
+        self.rect.center = (int(sx), int(sy))
+        self.vx = float(vx)
+        self.base_y = float(sy - 80) 
+        self.time = 0
+        
+    def update(self, blocks=None):
+        self.rect.x += int(self.vx)
+        # Y座標(振幅10ピクセルの範囲で動かす）
+        self.time += 0.1
+        self.rect.y = int(self.base_y + math.sin(self.time) * 10)
+
+    def draw(self, screen):
+        screen.blit(self.image, self.rect)
 
 class PlayerLeadAttack(pg.sprite.Sprite):
     def __init__(self, size, time, type, ini_angle = 45):
@@ -1375,8 +1680,8 @@ def main():
 
     bg_img = pg.image.load("fig/night_plain_bg.png")
     bg_width = bg_img.get_width()
-    pg.mixer.music.load("fig/魔王魂(ファンタジー).mp3")
-    pg.mixer.music.play(loops = -1)
+    # pg.mixer.music.load("fig/魔王魂(ファンタジー).mp3")
+    # pg.mixer.music.play(loops = -1)
 
     map_data = assets.init_map
     map_data = extend(map_data, ADD_STAGE_BLOCK, assets.probs)
@@ -1411,6 +1716,27 @@ def main():
     breathes = pg.sprite.Group()
     bombs = pg.sprite.Group()
     bullets = pg.sprite.Group()
+    # 爆弾の敵
+    bomb_enemies = pg.sprite.Group()
+    bomb_enemy = BombEnemy()
+    bomb_enemies.add(bomb_enemy)
+
+    # 炎の敵を追加
+    fire_enemies = pg.sprite.Group()
+    fire_enemy = FireEnemy()
+    fire_enemies.add(fire_enemy)
+
+    # 炎の弾のグループを追加
+    fire_weapons = pg.sprite.Group()
+
+    # 投げた爆弾のグループ
+    enemy_bombs = pg.sprite.Group()
+
+    # ここにスロット敵用のグループを追加
+    slot_enemies = pg.sprite.Group()
+    # スロットから発射される弾のグループ
+    slot_weapons = pg.sprite.Group()
+    slot_enemies.add(SlotEnemy())
 
     player = Player() 
     for i in range(ENEMY_NUM):
@@ -1566,9 +1892,78 @@ def main():
         #ーーーーーーーーーーーーーーーー
         heart_num = len(hearts)
 
+        # 爆弾の敵がプレイヤーに向かって投げる1〜2秒ごとに
+        for b_enemy in bomb_enemies:
+            if time >= b_enemy.next_throw:
+                enemy_bombs.add(Bomb(b_enemy, player))
+                b_enemy.next_throw = time + random.randint(60, 120)
 
+        # SlotEnemy からの発射処理（直線、同じ速さ、追尾なし）
+        for s in slot_enemies:
+            # s.next_shot はフレームカウント (time) ベース
+            if time >= getattr(s, "next_shot", 0):
+                # 位置は s.image_rect.center を起点にする
+                sx, sy = s.image_rect.center
+                # プレイヤー方向へ向かわせる（追尾しない -> 初速のみ設定）
+                dx = player.rect.centerx - sx
+                dy = player.rect.centery - sy
+                dist = math.hypot(dx, dy)
+                if dist == 0:
+                    vx = 0.0
+                    vy = 0.0
+                else:
+                    vx = dx / dist * s.weapon_speed
+                    vy = dy / dist * s.weapon_speed
+                # 弾を生成してグループへ追加
+                slot_weapons.add(SlotWeapon(sx, sy, vx, vy))
+                # 次の発射タイミングを設定（ランダム間隔）
+                s.next_shot = time + random.randint(90, 240)
+                
+        # 炎の敵から発射処理
+        for f_enemy in fire_enemies:
+            if time >= getattr(f_enemy, "next_shot", 0):
+                # 発射位置を設定（敵の中心から）
+                sx, sy = f_enemy.image_rect.center
+                # プレイヤーの方向に応じて速度の符号を決定
+                vx = f_enemy.weapon_speed
+                if player.rect.centerx < f_enemy.rect.centerx:
+                    vx = -f_enemy.weapon_speed
+                    # 左向きの場合、敵の左側から発射
+                    sx = f_enemy.rect.left - 5
+                else:
+                    # 右向きの場合、敵の右側から発射
+                    sx = f_enemy.rect.right + 5
+                
+                # 弾を生成してグループへ追加（Y座標はそのまま中心を使用）
+                fire_weapons.add(FireWeapon(sx, sy, vx))
+                # 次の発射タイミングを設定
+                f_enemy.next_shot = time + random.randint(90, 240)
 
         for enemy in pg.sprite.spritecollide(player, enemys, False): 
+            if player.no_damage_time == 0:
+                player.hp -= 1
+                for i in hearts:
+                    i.update(player, heart_num)
+                    heart_num -= 1
+                no_damage(player,1)
+
+        for fire in pg.sprite.spritecollide(player, fire_weapons, False): 
+            if player.no_damage_time == 0:
+                player.hp -= 1
+                for i in hearts:
+                    i.update(player, heart_num)
+                    heart_num -= 1
+                no_damage(player,1)
+
+        for slot in pg.sprite.spritecollide(player, slot_weapons, False): 
+            if player.no_damage_time == 0:
+                player.hp -= 1
+                for i in hearts:
+                    i.update(player, heart_num)
+                    heart_num -= 1
+                no_damage(player,1)
+
+        for bomb in pg.sprite.spritecollide(player, enemy_bombs, False): 
             if player.no_damage_time == 0:
                 player.hp -= 1
                 for i in hearts:
@@ -1584,7 +1979,36 @@ def main():
                 enemy.rect.centery += 10
                 if enemy.size <= 0:
                     enemy.kill()
+
+        collisions = pg.sprite.groupcollide(absurbs, fire_enemies, False, False)
+        for absorber, hit_list in collisions.items():
+            for enemy in hit_list:
+                enemy.size -= 0.05
+                enemy.patarn_to_img[enemy.patarn] = pg.transform.rotozoom(enemy.patarn_to_img[enemy.patarn], 0, enemy.size)
+                enemy.rect.centery += 10
+                if enemy.size <= 0:
+                    enemy.kill()
+                    player = kirby_fire(player)
+
+        collisions = pg.sprite.groupcollide(absurbs, slot_enemies, False, False)
+        for absorber, hit_list in collisions.items():
+            for enemy in hit_list:
+                enemy.size -= 0.05
+                enemy.patarn_to_img[enemy.patarn] = pg.transform.rotozoom(enemy.patarn_to_img[enemy.patarn], 0, enemy.size)
+                if enemy.size <= 0:
+                    enemy.kill()
                     player = Kajino_kirby(player)
+
+        collisions = pg.sprite.groupcollide(absurbs, bomb_enemies, False, False)
+        for absorber, hit_list in collisions.items():
+            for enemy in hit_list:
+                enemy.size -= 0.05
+                enemy.patarn_to_img[enemy.patarn] = pg.transform.rotozoom(enemy.patarn_to_img[enemy.patarn], 0, enemy.size)
+                enemy.rect.centery += 10
+                if enemy.size <= 0:
+                    enemy.kill()
+                    player = C0C24001_BombAbility(player)
+
         collisions = pg.sprite.groupcollide(bullets, enemys, False, False)
         for bullet, hit_list in collisions.items():
             for enemy in hit_list:
@@ -1593,6 +2017,33 @@ def main():
                     no_damage(enemy, 1)
                 if enemy.hp == 0:
                     enemy.kill()
+
+        # collisions = pg.sprite.groupcollide(fire_weapons, player, False, False)
+        # for fire_weapon, hit_list in collisions.items():
+        #     for player in hit_list:
+        #         if player.no_damage_time == 0:
+        #             player.hp -= 1
+        #             no_damage(player, 1)
+        #         if player.hp == 0:
+        #             gameover(screen, clock)
+
+        # collisions = pg.sprite.groupcollide(enemy_bombs, player, False, False)
+        # for bomb, hit_list in collisions.items():
+        #     for player in hit_list:
+        #         if player.no_damage_time == 0:
+        #             player.hp -= 1
+        #             no_damage(player, 1)
+        #         if player.hp == 0:
+        #             gameover(screen, clock)
+
+        # collisions = pg.sprite.groupcollide(slot_weapons, player, False, False)
+        # for slot_weapon, hit_list in collisions.items():
+        #     for player in hit_list:
+        #         if player.no_damage_time == 0:
+        #             player.hp -= 1
+        #             no_damage(player, 1)
+        #         if player.hp == 0:
+        #             gameover(screen, clock)
 
 
         for bound_boll in bound_balls:
@@ -1684,6 +2135,45 @@ def main():
             no_damage(enemy, 0)
             screen.blit(enemy.patarn_to_img[enemy.patarn], (enemy.rect.x - camera_x, enemy.rect.y))
         #------
+
+        # 爆弾の敵の更新と描画
+        for b_enemy in bomb_enemies:
+            b_enemy.update(floar_blocks)
+            screen.blit(b_enemy.image, (b_enemy.rect.x - camera_x, b_enemy.rect.y - 50))
+
+        # 炎の敵の更新と描画
+        for f_enemy in fire_enemies:
+            f_enemy.update(floar_blocks)
+            screen.blit(f_enemy.image, (f_enemy.rect.x - camera_x, f_enemy.rect.y - 50))
+
+        # 投げられた爆弾の更新と描画
+        for b in list(enemy_bombs):
+            b.update(floar_blocks)
+            screen.blit(b.image, (b.rect.x - camera_x, b.rect.y))
+        
+        # SlotEnemy の弾を更新・描画（画面外に出たら削除）
+        for w in list(slot_weapons):
+            w.update(floar_blocks)
+            screen.blit(w.image, (w.rect.x - camera_x, w.rect.y))
+            # 画面外チェックで削除
+            if w.rect.right < 0 or w.rect.left > SCREEN_WIDTH or w.rect.bottom < 0 or w.rect.top > SCREEN_HEIGHT:
+                slot_weapons.remove(w)
+        
+        # SlotEnemy の更新
+        for s in slot_enemies:
+            s.update(floar_blocks, player)
+
+        # SlotEnemy を描画
+        for s in slot_enemies:
+            screen.blit(s.image, (s.rect.x - camera_x, s.rect.y))
+
+        # 炎の弾の更新と描画
+        for w in list(fire_weapons):
+            w.update()
+            screen.blit(w.image, (w.rect.x - camera_x, w.rect.y))
+            # 画面外チェックで削除
+            if w.rect.right < 0 or w.rect.left > SCREEN_WIDTH:
+                fire_weapons.remove(w)
 
         for block in block_rects:
             screen.blit(assets.ground, (block.x - camera_x, block.y, block.width, block.height))

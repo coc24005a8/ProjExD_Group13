@@ -25,6 +25,21 @@ NO_DAMAGE_TIME = 120 # 無敵時間(フレーム単位)
 PLAYER_POWER = 10 # プレイヤーの攻撃力
 ENEMY_NUM = 1         # 敵の数
 ENEMY_SPEED = 1
+BULLET_SPEED = 10 
+SUPER_ATTACK_CHANCE = 5 
+
+#-------------------------------- 一旦 -------------------------------
+RED_TEXT = (255, 0, 0)      
+BLUE_TEXT = (0, 0, 255)     
+YELLOW_TEXT = (255, 255, 0) 
+CYAN_TEXT = (0, 255, 255)   
+
+# 頭上に表示する数字用のフォント
+# try:
+#     attack_font = pg.font.SysFont(None, 40)
+# except Exception as e:
+#     print(f"フォントの読み込みに失敗: {e}。デフォルトフォントを使用します。")
+#     attack_font = pg.font.Font(None, 40) 
 
 # ----------------------------------------------------------------
 # ========================================
@@ -1137,6 +1152,50 @@ class C0C24001_BombProjectile(pg.sprite.Sprite):
             return explosion_rect
         return None
 #---修正
+
+class Kajino_kirby(Player):
+    def __init__(self, instance):
+        super().__init__()
+        self.name = "kajino"
+        self.kajino_img = pg.image.load("カービィカジノ吸収.png").convert_alpha()
+        # self.img = pg.transform.scale(self.kajino_img, (50, 50))
+        self.kajino_img = pg.transform.rotozoom(self.kajino_img, 0, 0.1)
+        self.rect = instance.rect
+        self.rect.size = (28, 28)
+
+class Bullet(pg.sprite.Sprite):
+    def __init__(self, instance, type):
+        super().__init__()
+        self.configs = {
+            1: pg.transform.rotozoom(pg.image.load("きいろ.png"),0,0.1),      # タイプ1 (黄)
+            2: pg.transform.rotozoom(pg.image.load("あお.png"),0,0.2), # タイプ2 (青)
+            3: pg.transform.rotozoom(pg.image.load("あか.png"),0,0.3),   # タイプ3 (赤)
+            99999: pg.transform.rotozoom(pg.image.load("くろ.png"),0,0.5) ,   # 超特大 (黒)
+        }
+        self.img = self.configs[type]
+        self.rect = self.img.get_rect()
+        self.rect.center = instance.rect.center
+        # self.rect.center = (500, 100)
+        self.speed = 15 * instance.patarn[0]
+        self.time = 300
+    def update(self, screen, blocks, stage_width, camera_x) -> bool:
+        self.rect.x += int(self.speed)
+
+        # for block in blocks:
+        #     if self.rect.colliderect(block):
+        #         self.kill()
+
+        if self.rect.right < -50 or self.rect.left > SCREEN_WIDTH * stage_width + 50:
+            self.kill()
+        
+        self.time -= 1
+        if self.time <= 0:
+            self.kill()
+
+        screen.blit(self.img, (self.rect.x - camera_x, self.rect.y))
+        return True
+    
+
 class Enemy(pg.sprite.Sprite):
     """
     敵を司るクラス
@@ -1351,6 +1410,7 @@ def main():
     clashes = pg.sprite.Group()
     breathes = pg.sprite.Group()
     bombs = pg.sprite.Group()
+    bullets = pg.sprite.Group()
 
     player = Player() 
     for i in range(ENEMY_NUM):
@@ -1483,6 +1543,12 @@ def main():
                                 bomb.velocity_x = kick_speed
                                 bomb.velocity_y = -3  # 少し浮かせる
                                 break  # 1つだけキック
+                if event.key == pg.K_0:
+                    if random.randrange(1, 101) <= 5:
+                        type_ = 99999
+                    else:
+                        type_ = random.randrange(1, 4)
+                    bullets.add(Bullet(player, type_))
 
             # キーが離された時
             if event.type == pg.KEYUP:
@@ -1518,8 +1584,15 @@ def main():
                 enemy.rect.centery += 10
                 if enemy.size <= 0:
                     enemy.kill()
-                    player = C0C24001_BombAbility(player)
-
+                    player = Kajino_kirby(player)
+        collisions = pg.sprite.groupcollide(bullets, enemys, False, False)
+        for bullet, hit_list in collisions.items():
+            for enemy in hit_list:
+                if enemy.no_damage_time == 0:
+                    enemy.hp -= 1
+                    no_damage(enemy, 1)
+                if enemy.hp == 0:
+                    enemy.kill()
 
 
         for bound_boll in bound_balls:
@@ -1548,6 +1621,8 @@ def main():
             camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
         elif player.name == "bomb":
             camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
+        elif player.name == "kajino":
+            camera_x = player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
         # for i in player_lead_attacks:
         #     i.update(player)
         #     screen.blit(i.img, (100, 100))#(player.rect.x + 100, player.rect.y))
@@ -1565,6 +1640,8 @@ def main():
         elif player.name == "bomb":
             player.update(len(map_data[0]), all_blocks, floar_blocks, camera_x)
             screen.blit(player.bomb_img, (player.rect.x - camera_x, player.rect.y))
+        elif player.name == "kajino":
+            screen.blit(player.kajino_img, (player.rect.x - camera_x, player.rect.y - 50))
         for bomb in bombs:
             screen.blit(bomb.img, (bomb.rect.x - camera_x, bomb.rect.y))
         # kirby.draw_and_update(screen)
@@ -1595,7 +1672,7 @@ def main():
                 bomb.draw(screen, bomb.img, c0c24001_explosion_frames, camera_x)
                 screen.blit(bomb.img, (bomb.rect.x - camera_x, bomb.rect.y))
         
-
+        bullets.update(screen, all_blocks, len(map_data[0]), camera_x)
         for i in bound_balls:
             i.update()
             screen.blit(i.img, (i.rect.x - camera_x, i.rect.y))
@@ -1632,3 +1709,139 @@ if __name__ == "__main__":
     main()
     pg.quit()
     sys.exit()
+      
+
+
+# 色の定義 (頭上の数字用)
+
+
+
+
+# 画面設定
+
+# 3. ステージの「当たり判定用の四角形(Rect)」リストを作成
+
+
+# 4. プレイヤー設定 
+
+# --- 画像読み込みと左右反転 ---
+# try:
+#     player_image_original = pg.image.load("カービィカジノ吸収.png")
+#     player_image_right = pg.transform.scale(player_image_original, (player_width, player_height))
+#     player_image_left = pg.transform.flip(player_image_right, True, False)
+# except (pyg.error, FileNotFoundError) as e:
+#     if isinstance(e, FileNotFoundError):
+#         print("プレイヤー画像ファイル 'カービィカジノ吸収.png' が見つかりません。")
+#     else:
+#         print(f"プレイヤー画像の読み込みに失敗しました: {e}")
+#     player_image_right = pg.Surface((player_width, player_height))
+#     player_image_right.fill((50, 200, 50))
+#     player_image_left = player_image_right.copy() 
+
+# player_image_current = player_image_right
+
+# # ★★★ 弾の画像読み込みとスケール (ファイル名を修正) ★★★
+# bullet_images = {} # 弾の画像を格納する辞書
+
+# # 弾の種類とファイル名、サイズを定義
+# bullet_configs = {
+#     1: {"file": "きいろ.png", "size": (TILE_SIZE // 2, TILE_SIZE // 2)},      # タイプ1 (黄)
+#     2: {"file": "あお.png", "size": (TILE_SIZE // 2 + 10, TILE_SIZE // 2 + 10)}, # タイプ2 (青)
+#     3: {"file": "あか.png", "size": (TILE_SIZE // 2 + 20, TILE_SIZE // 2 + 20)},   # タイプ3 (赤)
+#     99999: {"file": "くろ.png", "size": (TILE_SIZE * 15, TILE_SIZE * 15)}    # 超特大 (黒)
+# }
+
+# for type_key, config in bullet_configs.items():
+#     try:
+#         # 画像を読み込む (.jpgは透過情報がないため .convert() が最適ですが、
+#         # .convert_alpha() でも問題なく動作します)
+#         img_original = pg.image.load(config["file"]).convert_alpha()
+#         bullet_images[type_key] = pg.transform.scale(img_original, config["size"])
+#     except (pg.error, FileNotFoundError) as e:
+#         # エラーメッセージも正しいファイル名に修正
+#         print(f"弾画像ファイル '{config['file']}' の読み込みに失敗しました: {e}") 
+#         #エラー時は代替として赤い四角形を生成
+#         alt_surface = pg.Surface(config["size"], pg.SRCALPHA) # アルファチャンネル付き
+#         alt_surface.fill((255, 0, 0, 128)) # 半透明な赤
+#         bullet_images[type_key] = alt_surface
+# ----------------------------------------
+
+ 
+
+# 弾を管理するリスト: [bullet_rect, 弾の画像, 向き(1 or -1), 攻撃タイプ]
+# bullets = []
+
+# current_attack_type = random.randint(1, 3)
+
+
+                
+#             # ★★★ 攻撃キー (Zキー) が押された時 ★★★
+#             if event.key == pg.K_z:
+#                 actual_attack_type = current_attack_type
+                
+#                 bullet_image = bullet_images.get(actual_attack_type)
+#                 if bullet_image is None: 
+#                     bullet_image = bullet_images.get(1) 
+#                     actual_attack_type = 1 
+                    
+#                 bullet_width, bullet_height = bullet_image.get_size()
+                
+#                 start_x = player_rect.centerx - bullet_width // 2 
+#                 start_y = player_rect.centery - bullet_height // 2 
+                
+#                 bullet_rect = pg.Rect(start_x, start_y, bullet_width, bullet_height)
+                
+#                 bullets.append([bullet_rect, bullet_image, player_direction, actual_attack_type])
+                
+#                 next_attack_candidate = random.randint(1, 3)
+                
+#                 if random.randint(1, 100) <= SUPER_ATTACK_CHANCE:
+#                     current_attack_type = 99999 
+#                 else:
+#                     current_attack_type = next_attack_candidate 
+#             # ★★★★★★★★★★★★★★★★★★★★★★★
+
+#         if event.type == pg.KEYUP:
+#             if event.key == pg.K_LEFT:
+#                 player_move_left = False
+#             if event.key == pg.K_RIGHT:
+#                 player_move_right = False
+
+#     # 7. プレイヤーのロジック更新 (省略... 元と同じ)
+
+
+#     # ★★★ 弾のロジック更新 ★★★
+#     for bullet in reversed(bullets):
+#         bullet_rect = bullet[0]
+#         direction = bullet[2] # 向きはリストの3番目 (index 2)
+#         bullet_rect.x += BULLET_SPEED * direction
+#         if bullet_rect.right < 0 or bullet_rect.left > SCREEN_WIDTH:
+#             bullets.remove(bullet)
+
+#     # 8. 描画処理
+    
+#     # ★★★ 頭上に次の攻撃タイプを描画 ★★★
+#     attack_text = str(current_attack_type)
+    
+#     if current_attack_type == 1: text_color = YELLOW_TEXT
+#     elif current_attack_type == 2: text_color = BLUE_TEXT
+#     elif current_attack_type == 3: text_color = RED_TEXT
+#     else: text_color = CYAN_TEXT 
+        
+#     text_surface = attack_font.render(attack_text, True, text_color, WHITE)
+    
+#     text_rect = text_surface.get_rect()
+#     text_rect.centerx = player_rect.centerx
+#     text_rect.bottom = player_rect.top - 5 
+    
+#     screen.blit(text_surface, text_rect)
+#     # ★★★★★★★★★★★★★★★★★★★★★★★
+
+#     # ★★★ 弾の描画 (画像を使用) ★★★
+#     for bullet in bullets:
+#         bullet_rect = bullet[0]
+#         bullet_image_to_draw = bullet[1] # 画像はリストの2番目 (index 1)
+        
+#         screen.blit(bullet_image_to_draw, bullet_rect)
+#     # ★★★★★★★★★★★★★★
+
